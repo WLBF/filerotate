@@ -1,7 +1,15 @@
 # filerotate
 
-
-## Features
-* Support recursive directory iteration and regex file name filter.
-* Configuration friendly with modern format like json or yaml or toml.
-* Rotate support copy truncate mode.
+## Todo
+- [x] structure log
+- [ ] read config
+- [ ] copy truncate
+- [ ] storage size
+- [ ] sparse copy
+- [ ] copy truncate rotate
+- [ ] rename rotate
+- [ ] pre post rotate script
+- [ ] gz compress
+- [ ] rotate name rule
+- [ ] delete job
+- [ ] truncate job
