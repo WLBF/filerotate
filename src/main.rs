@@ -1,5 +1,7 @@
 use tracing::info;
-use tracing_subscriber;
+
+
+mod fs;
 
 fn main() {
     // install global collector configured based on RUST_LOG env var.
