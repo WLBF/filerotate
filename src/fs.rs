@@ -1,8 +1,10 @@
 use std::os::unix::io::RawFd;
 use std::path::PathBuf;
 use std::path::Path;
+use std::fs::File;
+use std::os::unix::io::AsRawFd;
 use anyhow::Result;
-use nix::unistd::{lseek, Whence};
+use nix::unistd::{lseek, ftruncate, Whence};
 use nix::sys::stat::stat;
 use nix::sys::sendfile::sendfile;
 
@@ -10,11 +12,16 @@ const KIB: usize = 1024;
 const MIB: usize = KIB * 1024;
 const GIB: usize = MIB * 1024;
 
-fn copy_truncate(_src: PathBuf, _dst: PathBuf) -> Result<()> {
-    // let src_f = File::options().read(true).open(src)?;
-    // let dst_f = File::options().read(true).open(dst)?;
+fn copy_truncate(src: &Path, dst: &Path) -> Result<()> {
+    let src_f = File::options().read(true).write(true).open(src)?;
+    let dst_f = File::create(dst)?;
 
-    unimplemented!()
+    sparse_copy(src_f.as_raw_fd(), dst_f.as_raw_fd())?;
+    dst_f.sync_all()?;
+
+    ftruncate(src_f.as_raw_fd(), 0)?;
+
+    Ok(())
 }
 
 fn sparse_copy(src_fd: RawFd, dst_fd: RawFd) -> Result<usize> {
@@ -39,8 +46,6 @@ mod tests {
     use super::*;
     use std::cmp::min;
     use std::io;
-    use std::fs::File;
-    use std::os::unix::io::AsRawFd;
     use rand::prelude::*;
     use anyhow::Result;
     use nix::libc::{off_t};
@@ -96,6 +101,22 @@ mod tests {
         let digest_a = file_digest(&path_a).unwrap();
         let digest_b = file_digest(&path_b).unwrap();
         assert_eq!(size_a, 8 * KIB);
+        assert_eq!(size_b, 8 * KIB);
+        assert_eq!(digest_a, digest_b);
+    }
+
+    #[test]
+    fn copy_truncate_test() {
+        let dir = tempdir().unwrap();
+        let path_a = dir.path().join("a");
+        let path_b = dir.path().join("b");
+        create_with_leading_hole(&path_a, 16 * KIB, 8 * KIB).unwrap();
+        let digest_a = file_digest(&path_a).unwrap();
+        copy_truncate(&path_a, &path_b).unwrap();
+        let size_a = storage_size(&path_a).unwrap();
+        let size_b = storage_size(&path_b).unwrap();
+        let digest_b = file_digest(&path_b).unwrap();
+        assert_eq!(size_a, 0);
         assert_eq!(size_b, 8 * KIB);
         assert_eq!(digest_a, digest_b);
     }

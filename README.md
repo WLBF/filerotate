@@ -3,9 +3,9 @@
 ## Todo
 - [x] structure log
 - [ ] read config
-- [ ] copy truncate
-- [ ] storage size
-- [ ] sparse copy
+- [x] copy truncate
+- [x] storage size
+- [x] sparse copy
 - [ ] copy truncate rotate
 - [ ] rename rotate
 - [ ] pre post rotate script
@@ -13,3 +13,4 @@
 - [ ] rotate name rule
 - [ ] delete job
 - [ ] truncate job
+- [ ] rotate range duplicate check
