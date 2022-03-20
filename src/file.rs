@@ -1,18 +1,34 @@
-use std::os::unix::io::RawFd;
-use std::path::PathBuf;
-use std::path::Path;
-use std::fs::File;
-use std::os::unix::io::AsRawFd;
 use anyhow::Result;
-use nix::unistd::{lseek, ftruncate, Whence};
-use nix::sys::stat::stat;
+use nix::libc::off_t;
+use nix::libc::{S_IFDIR, S_IFMT, S_IFREG};
 use nix::sys::sendfile::sendfile;
+use nix::sys::stat::{stat, FileStat};
+use nix::unistd::{ftruncate, lseek, write, Whence};
+use rand::prelude::*;
+
+use sha2::{Digest, Sha256};
+use std::cmp::min;
+use std::fs::File;
+use std::io;
+use std::os::unix::io::AsRawFd;
+use std::os::unix::io::RawFd;
+use std::path::Path;
 
 const KIB: usize = 1024;
 const MIB: usize = KIB * 1024;
 const GIB: usize = MIB * 1024;
 
-fn copy_truncate(src: &Path, dst: &Path) -> Result<()> {
+#[inline(always)]
+pub fn is_file(f_st: &FileStat) -> bool {
+    f_st.st_mode & S_IFMT == S_IFREG
+}
+
+#[inline(always)]
+pub fn is_dir(f_st: &FileStat) -> bool {
+    f_st.st_mode & S_IFMT == S_IFDIR
+}
+
+pub fn copy_truncate(src: &Path, dst: &Path) -> Result<()> {
     let src_f = File::options().read(true).write(true).open(src)?;
     let dst_f = File::create(dst)?;
 
@@ -36,47 +52,39 @@ fn sparse_copy(src_fd: RawFd, dst_fd: RawFd) -> Result<usize> {
     Ok(sz)
 }
 
-fn storage_size(path: &Path) -> Result<usize> {
+pub fn storage_size(path: &Path) -> Result<usize> {
     let file_stat = stat(path)?;
     Ok(file_stat.st_blocks as usize * 512)
+}
+
+pub fn create_with_leading_hole(path: &Path, hole_size: usize, data_size: usize) -> Result<File> {
+    let file = File::create(path)?;
+    let fd = file.as_raw_fd();
+    lseek(fd, hole_size as off_t, Whence::SeekSet)?;
+
+    let mut rng = rand::thread_rng();
+    const BUF_SZ: usize = 4096;
+    let mut buf: [u8; BUF_SZ] = [0; BUF_SZ];
+    for i in (0..data_size).step_by(BUF_SZ) {
+        let end = min(data_size - i, BUF_SZ);
+        rng.fill(&mut buf[..end]);
+        write(fd, &buf[..end])?;
+    }
+
+    Ok(file)
+}
+
+fn file_digest(path: &Path) -> Result<Vec<u8>> {
+    let mut file = File::open(path)?;
+    let mut sha256 = Sha256::new();
+    io::copy(&mut file, &mut sha256)?;
+    Ok(sha256.finalize().to_vec())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cmp::min;
-    use std::io;
-    use rand::prelude::*;
-    use anyhow::Result;
-    use nix::libc::{off_t};
-    use nix::unistd::{lseek, write, Whence};
     use tempfile::tempdir;
-    use sha2::{Sha256, Digest};
-    use sha2::digest::Output;
-
-    fn create_with_leading_hole(path: &Path, offset: usize, size: usize) -> Result<File> {
-        let file = File::create(path)?;
-        let fd = file.as_raw_fd();
-        lseek(fd, offset as off_t, Whence::SeekSet)?;
-
-        let mut rng = rand::thread_rng();
-        const BUF_SZ: usize = 4096;
-        let mut buf: [u8; BUF_SZ] = [0; BUF_SZ];
-        for i in (0..size).step_by(BUF_SZ) {
-            let end = min(size - i, BUF_SZ);
-            rng.fill(&mut buf[..end]);
-            write(fd, &buf[..end])?;
-        }
-
-        Ok(file)
-    }
-
-    fn file_digest(path: &Path) -> Result<Output<Sha256>> {
-        let mut file = File::open(path)?;
-        let mut sha256 = Sha256::new();
-        io::copy(&mut file, &mut sha256)?;
-        Ok(sha256.finalize())
-    }
 
     #[test]
     fn storage_size_test() {
