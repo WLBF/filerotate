@@ -28,6 +28,11 @@ pub fn is_dir(f_st: &FileStat) -> bool {
     f_st.st_mode & S_IFMT == S_IFDIR
 }
 
+#[inline(always)]
+pub fn stat_size(f_st: &FileStat) -> usize {
+    f_st.st_blocks as usize * 512
+}
+
 pub fn copy_truncate(src: &Path, dst: &Path) -> Result<()> {
     let src_f = File::options().read(true).write(true).open(src)?;
     let dst_f = File::create(dst)?;
@@ -54,7 +59,7 @@ fn sparse_copy(src_fd: RawFd, dst_fd: RawFd) -> Result<usize> {
 
 pub fn storage_size(path: &Path) -> Result<usize> {
     let file_stat = stat(path)?;
-    Ok(file_stat.st_blocks as usize * 512)
+    Ok(stat_size(&file_stat))
 }
 
 pub fn create_with_leading_hole(path: &Path, hole_size: usize, data_size: usize) -> Result<File> {

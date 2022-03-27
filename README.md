@@ -6,8 +6,9 @@
 - [x] copy truncate
 - [x] storage size
 - [x] sparse copy
-- [ ] copy truncate rotate
-- [ ] rename rotate
+- [x] copy truncate rotate
+- [x] rename rotate
+- [ ] rotate
 - [ ] pre post rotate script
 - [ ] gz compress
 - [ ] rotate name rule
