@@ -4,7 +4,7 @@ use crate::file::*;
 use crate::path_rule::*;
 use anyhow::Result;
 use nix::sys::stat::{FileStat, stat};
-use std::fs::{create_dir, read_dir, rename, remove_file};
+use std::fs::{create_dir, read_dir, rename, remove_file, File};
 use std::path::{Path, PathBuf};
 
 pub fn rotate(path: PathBuf, keep: usize, depth: Option<i32>) -> Result<()> {
@@ -41,6 +41,7 @@ fn move_create(src: PathBuf, dst: PathBuf, depth: Option<i32>) -> Result<()> {
 
     if is_file(&f_st) {
         rename(&src, &dst)?;
+        File::create(&src)?;
         return Ok(());
     }
 
@@ -242,8 +243,8 @@ mod tests {
 
     #[test]
     fn rotate_simple_test() {
-        // let path = tempdir().unwrap().into_path();
-        let path = env::current_dir().unwrap();
+        let path = tempdir().unwrap().into_path();
+        // let path = env::current_dir().unwrap();
 
         let tree0 = gen_tree("dir0");
         let tree1 = gen_tree("dir0.1");
@@ -252,17 +253,28 @@ mod tests {
         let path1 = path.join("dir0.1");
         let path2 = path.join("dir0.2");
         let path3 = path.join("dir0.3");
-        let path4 = path.join("dir0.4");
 
         build_tree(path.clone(), &tree0);
 
-        rotate(tree0.clone(), 2, None);
+        rotate(path0.clone(), 2, None);
         assert!(inspect_tree(&tree0, path0.clone()));
         assert!(inspect_tree(&tree1, path1.clone()));
 
-        // rotate(path.clone(), 2, None);
-        // assert!(inspect_tree(&tree0, path0.clone()));
-        // assert!(inspect_tree(&tree1, path1.clone()));
-        // assert!(inspect_tree(&tree2, path2.clone()));
+        rotate(path0.clone(), 2, None);
+        assert!(inspect_tree(&tree0, path0.clone()));
+        assert!(inspect_tree(&tree1, path1.clone()));
+        assert!(inspect_tree(&tree2, path2.clone()));
+
+        rotate(path0.clone(), 2, None);
+        assert!(inspect_tree(&tree0, path0.clone()));
+        assert!(inspect_tree(&tree1, path1.clone()));
+        assert!(inspect_tree(&tree2, path2.clone()));
+        assert!(!path3.exists());
+
+        rotate(path0.clone(), 2, None);
+        assert!(inspect_tree(&tree0, path0.clone()));
+        assert!(inspect_tree(&tree1, path1.clone()));
+        assert!(inspect_tree(&tree2, path2.clone()));
+        assert!(!path3.exists());
     }
 }
