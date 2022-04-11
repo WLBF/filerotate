@@ -1,9 +1,36 @@
+use std::collections::HashSet;
 use crate::file;
 use crate::file::*;
+use crate::path_rule::*;
 use anyhow::Result;
-use nix::sys::stat::stat;
-use std::fs::{create_dir, read_dir, rename};
-use std::path::PathBuf;
+use nix::sys::stat::{FileStat, stat};
+use std::fs::{create_dir, read_dir, rename, remove_file};
+use std::path::{Path, PathBuf};
+
+pub fn rotate(path: PathBuf, keep: usize, depth: Option<i32>) -> Result<()> {
+    let parent = path.parent().unwrap();
+    let entries = read_dir(parent)?;
+    let mut paths = vec![];
+    for res in entries {
+        paths.push(res?.path());
+    }
+
+    let rule = DefaultRule::new(path, paths, keep);
+
+    for p in rule.delete_paths().iter() {
+        remove_file(p);
+    }
+
+    for p in rule.rename_paths().iter() {
+        rename(p, rule.next_path(p).unwrap());
+    }
+
+    if let Some(p) = rule.init_path() {
+        move_create(p.clone(), rule.next_path(&p).unwrap(), depth);
+    }
+
+    Ok(())
+}
 
 fn move_create(src: PathBuf, dst: PathBuf, depth: Option<i32>) -> Result<()> {
     if depth.map_or(false, |n| n <= 0) {
@@ -39,7 +66,7 @@ fn copy_truncate(src: PathBuf, dst: PathBuf, depth: Option<i32>) -> Result<()> {
     let f_st = stat(&src)?;
 
     if is_file(&f_st) {
-        // do not copy if zero size file, see: https://man7.org/linux/man-pages/man2/lseek.2.html
+        // do not copy zero size file, see: https://man7.org/linux/man-pages/man2/lseek.2.html
         if stat_size(&f_st) > 0 {
             file::copy_truncate(&src, &dst)?;
         }
@@ -62,6 +89,7 @@ fn copy_truncate(src: PathBuf, dst: PathBuf, depth: Option<i32>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use super::*;
     use std::fs::DirEntry;
     use std::fs::{metadata};
@@ -210,5 +238,31 @@ mod tests {
         copy_truncate(path0, path1.clone(), None).unwrap();
 
         assert!(inspect_tree(&tree1, path1));
+    }
+
+    #[test]
+    fn rotate_simple_test() {
+        // let path = tempdir().unwrap().into_path();
+        let path = env::current_dir().unwrap();
+
+        let tree0 = gen_tree("dir0");
+        let tree1 = gen_tree("dir0.1");
+        let tree2 = gen_tree("dir0.2");
+        let path0 = path.join("dir0");
+        let path1 = path.join("dir0.1");
+        let path2 = path.join("dir0.2");
+        let path3 = path.join("dir0.3");
+        let path4 = path.join("dir0.4");
+
+        build_tree(path.clone(), &tree0);
+
+        rotate(tree0.clone(), 2, None);
+        assert!(inspect_tree(&tree0, path0.clone()));
+        assert!(inspect_tree(&tree1, path1.clone()));
+
+        // rotate(path.clone(), 2, None);
+        // assert!(inspect_tree(&tree0, path0.clone()));
+        // assert!(inspect_tree(&tree1, path1.clone()));
+        // assert!(inspect_tree(&tree2, path2.clone()));
     }
 }

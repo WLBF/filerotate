@@ -2,6 +2,7 @@ use tracing::info;
 
 mod file;
 mod rotate;
+mod path_rule;
 
 fn main() {
     // install global collector configured based on RUST_LOG env var.
