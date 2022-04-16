@@ -1,13 +1,14 @@
-
+use std::ffi::OsStr;
 use crate::file;
 use crate::file::*;
 use crate::path_rule::*;
 use anyhow::{Result};
-use nix::sys::stat::{stat};
+use nix::sys::stat::{FileStat, stat};
 use std::fs::{create_dir, read_dir, rename, remove_file, File, remove_dir_all};
 use std::path::{PathBuf};
+use regex::Regex;
 
-pub fn rotate(path: PathBuf, keep: usize, depth: Option<i32>) -> Result<()> {
+pub fn rotate(path: PathBuf, keep: usize, depth_opt: Option<i32>, sz_opt: Option<i64>, re_opt: Option<&Regex>) -> Result<()> {
     let parent = path.parent().unwrap();
     let entries = read_dir(parent)?;
     let mut paths = vec![];
@@ -30,20 +31,39 @@ pub fn rotate(path: PathBuf, keep: usize, depth: Option<i32>) -> Result<()> {
     }
 
     if let Some(p) = rule.init_path() {
-        move_create(p.clone(), rule.next_path(&p).unwrap(), depth);
+        move_create(p.clone(), rule.next_path(&p).unwrap(), depth_opt, sz_opt, re_opt);
     }
 
     Ok(())
 }
 
-fn move_create(src: PathBuf, dst: PathBuf, depth: Option<i32>) -> Result<()> {
-    if depth.map_or(false, |n| n <= 0) {
+fn move_create(src: PathBuf, dst: PathBuf, depth_opt: Option<i32>, sz_opt: Option<i64>, re_opt: Option<&Regex>) -> Result<()> {
+    if depth_opt.map_or(false, |n| n <= 0) {
         return Ok(());
     }
 
     let f_st = stat(&src)?;
 
     if is_file(&f_st) {
+        // check if size hit threshold
+        if let Some(sz) = sz_opt {
+            if f_st.st_blocks * 512 < sz {
+                return Ok(())
+            }
+        }
+
+        // check if name match regex
+        if let Some(re) = re_opt {
+            match src.file_name().unwrap().to_str() {
+                None => return Ok(()),
+                Some(name) => {
+                   if !re.is_match(name) {
+                       return Ok(());
+                   }
+                }
+            }
+        }
+
         rename(&src, &dst)?;
         File::create(&src)?;
         return Ok(());
@@ -56,7 +76,7 @@ fn move_create(src: PathBuf, dst: PathBuf, depth: Option<i32>) -> Result<()> {
             let entry = res?;
             let nxt_src = entry.path();
             let nxt_dst = dst.join(nxt_src.file_name().unwrap());
-            move_create(nxt_src, nxt_dst, depth.map(|n| n - 1))?;
+            move_create(nxt_src, nxt_dst, depth_opt.map(|n| n - 1), sz_opt, re_opt)?;
         }
     }
 
