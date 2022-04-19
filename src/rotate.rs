@@ -1,14 +1,49 @@
 use std::ffi::OsStr;
+use std::fmt;
 use crate::file;
 use crate::file::*;
 use crate::path_rule::*;
+use crate::regex::Regex;
 use anyhow::{Result};
 use nix::sys::stat::{FileStat, stat};
 use std::fs::{create_dir, read_dir, rename, remove_file, File, remove_dir_all};
 use std::path::{PathBuf};
-use regex::Regex;
+use serde::{Serialize, Deserialize, Deserializer};
+
+#[derive(Deserialize, Debug)]
+pub enum Mode {
+    MoveCreate,
+    CopyTruncate,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct RotateArgs {
+    path: PathBuf,
+    keep: usize,
+    #[serde(rename = "depth")]
+    depth_opt: Option<i32>,
+    #[serde(rename = "size")]
+    sz_opt: Option<i64>,
+    #[serde(rename = "regex")]
+    re_opt: Option<Regex>,
+    mode: Mode,
+}
 
 pub fn rotate(path: PathBuf, keep: usize, depth_opt: Option<i32>, sz_opt: Option<i64>, re_opt: Option<&Regex>) -> Result<()> {
+    let f_st = stat(&path)?;
+
+    if is_file(&f_st) {
+        // check if size hit threshold
+        if !size_check(sz_opt, f_st) {
+            return Ok(());
+        }
+
+        // check if name match regex
+        if !regex_check(re_opt, &path) {
+            return Ok(());
+        }
+    }
+
     let parent = path.parent().unwrap();
     let entries = read_dir(parent)?;
     let mut paths = vec![];
@@ -37,6 +72,21 @@ pub fn rotate(path: PathBuf, keep: usize, depth_opt: Option<i32>, sz_opt: Option
     Ok(())
 }
 
+fn size_check(sz_opt: Option<i64>, f_st: FileStat) -> bool {
+    match sz_opt {
+        Some(sz) => f_st.st_blocks * 512 > sz,
+        None => true
+    }
+}
+
+fn regex_check(re_opt: Option<&Regex>, path: &PathBuf) -> bool {
+    match (re_opt, path.file_name().unwrap().to_str()) {
+        (Some(re), Some(name)) => re.is_match(name),
+        (None, _) => true,
+        _ => false,
+    }
+}
+
 fn move_create(src: PathBuf, dst: PathBuf, depth_opt: Option<i32>, sz_opt: Option<i64>, re_opt: Option<&Regex>) -> Result<()> {
     if depth_opt.map_or(false, |n| n <= 0) {
         return Ok(());
@@ -46,22 +96,13 @@ fn move_create(src: PathBuf, dst: PathBuf, depth_opt: Option<i32>, sz_opt: Optio
 
     if is_file(&f_st) {
         // check if size hit threshold
-        if let Some(sz) = sz_opt {
-            if f_st.st_blocks * 512 < sz {
-                return Ok(())
-            }
+        if !size_check(sz_opt, f_st) {
+            return Ok(());
         }
 
         // check if name match regex
-        if let Some(re) = re_opt {
-            match src.file_name().unwrap().to_str() {
-                None => return Ok(()),
-                Some(name) => {
-                   if !re.is_match(name) {
-                       return Ok(());
-                   }
-                }
-            }
+        if !regex_check(re_opt, &src) {
+            return Ok(());
         }
 
         rename(&src, &dst)?;
