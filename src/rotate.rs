@@ -8,6 +8,7 @@ use anyhow::{Result};
 use nix::sys::stat::{FileStat, stat};
 use std::fs::{create_dir, read_dir, rename, remove_file, File, remove_dir_all};
 use std::path::{PathBuf};
+use std::process::Command;
 use serde::{Serialize, Deserialize, Deserializer};
 
 #[derive(Deserialize, Debug)]
@@ -17,7 +18,7 @@ pub enum Mode {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct RotateArgs {
+pub struct Rotate {
     path: PathBuf,
     keep: usize,
     #[serde(rename = "depth")]
@@ -26,50 +27,71 @@ pub struct RotateArgs {
     sz_opt: Option<i64>,
     #[serde(rename = "regex")]
     re_opt: Option<Regex>,
+    #[serde(rename = "precmd")]
+    pre_opt: Option<Vec<String>>,
+    #[serde(rename = "postcmd")]
+    post_opt: Option<Vec<String>>,
     mode: Mode,
 }
 
-pub fn rotate(path: PathBuf, keep: usize, depth_opt: Option<i32>, sz_opt: Option<i64>, re_opt: Option<&Regex>) -> Result<()> {
-    let f_st = stat(&path)?;
+impl Rotate {
+    pub fn rotate(&self) -> Result<()> {
+        let f_st = stat(&self.path)?;
 
-    if is_file(&f_st) {
-        // check if size hit threshold
-        if !size_check(sz_opt, f_st) {
-            return Ok(());
+        if is_file(&f_st) {
+            // check if size hit threshold
+            if !size_check(self.sz_opt, f_st) {
+                return Ok(());
+            }
+
+            // check if name match regex
+            if !regex_check(self.re_opt.as_ref(), &self.path) {
+                return Ok(());
+            }
         }
 
-        // check if name match regex
-        if !regex_check(re_opt, &path) {
-            return Ok(());
+        let parent = self.path.parent().unwrap();
+        let entries = read_dir(parent)?;
+        let mut paths = vec![];
+        for res in entries {
+            paths.push(res?.path());
         }
-    }
 
-    let parent = path.parent().unwrap();
-    let entries = read_dir(parent)?;
-    let mut paths = vec![];
-    for res in entries {
-        paths.push(res?.path());
-    }
+        let rule = DefaultRule::new(self.path.clone(), paths, self.keep);
 
-    let rule = DefaultRule::new(path, paths, keep);
-
-    for p in rule.delete_paths().iter() {
-        if p.is_file() {
-            remove_file(p)?;
-        } else if p.is_dir() {
-            remove_dir_all(p)?;
+        for p in rule.delete_paths().iter() {
+            if p.is_file() {
+                remove_file(p)?;
+            } else if p.is_dir() {
+                remove_dir_all(p)?;
+            }
         }
-    }
 
-    for p in rule.rename_paths().iter() {
-        rename(p, rule.next_path(p).unwrap());
-    }
+        for p in rule.rename_paths().iter() {
+            rename(p, rule.next_path(p).unwrap());
+        }
 
-    if let Some(p) = rule.init_path() {
-        move_create(p.clone(), rule.next_path(&p).unwrap(), depth_opt, sz_opt, re_opt);
-    }
+        if let Some(p) = rule.init_path() {
+            if let Some(cmd) = &self.pre_opt {
+                Command::new(&cmd[0])
+                    .args(&cmd[1..])
+                    .output()?;
+            }
 
-    Ok(())
+            match self.mode {
+                Mode::MoveCreate => move_create(p.clone(), rule.next_path(&p).unwrap(), self.depth_opt, self.sz_opt, self.re_opt.as_ref())?,
+                Mode::CopyTruncate => copy_truncate(p.clone(), rule.next_path(&p).unwrap(), self.depth_opt, self.sz_opt, self.re_opt.as_ref())?,
+            }
+
+            if let Some(cmd) = &self.post_opt {
+                Command::new(&cmd[0])
+                    .args(&cmd[1..])
+                    .output()?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 fn size_check(sz_opt: Option<i64>, f_st: FileStat) -> bool {
@@ -124,14 +146,24 @@ fn move_create(src: PathBuf, dst: PathBuf, depth_opt: Option<i32>, sz_opt: Optio
     Ok(())
 }
 
-fn copy_truncate(src: PathBuf, dst: PathBuf, depth: Option<i32>) -> Result<()> {
-    if depth.map_or(false, |n| n <= 0) {
+fn copy_truncate(src: PathBuf, dst: PathBuf, depth_opt: Option<i32>, sz_opt: Option<i64>, re_opt: Option<&Regex>) -> Result<()> {
+    if depth_opt.map_or(false, |n| n <= 0) {
         return Ok(());
     }
 
     let f_st = stat(&src)?;
 
     if is_file(&f_st) {
+        // check if size hit threshold
+        if !size_check(sz_opt, f_st) {
+            return Ok(());
+        }
+
+        // check if name match regex
+        if !regex_check(re_opt, &src) {
+            return Ok(());
+        }
+
         // do not copy zero size file, see: https://man7.org/linux/man-pages/man2/lseek.2.html
         if stat_size(&f_st) > 0 {
             file::copy_truncate(&src, &dst)?;
@@ -146,7 +178,7 @@ fn copy_truncate(src: PathBuf, dst: PathBuf, depth: Option<i32>) -> Result<()> {
             let entry = res?;
             let nxt_src = entry.path();
             let nxt_dst = dst.join(nxt_src.file_name().unwrap());
-            copy_truncate(nxt_src, nxt_dst, depth.map(|n| n - 1))?;
+            copy_truncate(nxt_src, nxt_dst, depth_opt.map(|n| n - 1), sz_opt, re_opt)?;
         }
     }
 
