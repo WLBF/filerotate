@@ -1,0 +1,16 @@
+- path: /a/b/c
+  keep: 3
+  depth: 2
+  size: 1024
+  regex: "^ab$"
+  precmd: ["sh", "-c", "echo", "aaa"]
+  postcmd: ["sh", "-c", "echo", "aaa"]
+  mode: CopyTruncate
+- path: /a/b/c
+  keep: 3
+  depth: 2
+  size: 1024
+  regex: "^ab$"
+  precmd: ["sh", "-c", "echo", "aaa"]
+  postcmd: ["sh", "-c", "echo", "aaa"]
+  mode: MoveCreate

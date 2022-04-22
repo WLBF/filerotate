@@ -4,7 +4,7 @@ use crate::file;
 use crate::file::*;
 use crate::path_rule::*;
 use crate::regex::Regex;
-use anyhow::{Result};
+use anyhow::{Result, anyhow};
 use nix::sys::stat::{FileStat, stat};
 use std::fs::{create_dir, read_dir, rename, remove_file, File, remove_dir_all};
 use std::path::{PathBuf};
@@ -36,6 +36,10 @@ pub struct Rotate {
 
 impl Rotate {
     pub fn rotate(&self) -> Result<()> {
+        if !self.path.is_absolute() {
+            return Err(anyhow!("path must be absolute"));
+        }
+
         let f_st = stat(&self.path)?;
 
         if is_file(&f_st) {
@@ -91,6 +95,10 @@ impl Rotate {
         }
 
         Ok(())
+    }
+
+    pub fn get_path(&self) -> &PathBuf {
+        &self.path
     }
 }
 
