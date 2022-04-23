@@ -1,15 +1,18 @@
 use std::ffi::OsStr;
 use std::fmt;
-use crate::file;
-use crate::file::*;
-use crate::path_rule::*;
-use crate::regex::Regex;
 use anyhow::{Result, anyhow};
+use tracing::{debug, info, warn, error};
 use nix::sys::stat::{FileStat, stat};
 use std::fs::{create_dir, read_dir, rename, remove_file, File, remove_dir_all};
 use std::path::{PathBuf};
 use std::process::Command;
 use serde::{Serialize, Deserialize, Deserializer};
+
+use crate::util;
+use crate::util::*;
+use crate::path_rule::*;
+use crate::regex::Regex;
+use crate::byte_size::ByteSize;
 
 #[derive(Deserialize, Debug)]
 pub enum Mode {
@@ -24,7 +27,7 @@ pub struct Rotate {
     #[serde(rename = "depth")]
     depth_opt: Option<i32>,
     #[serde(rename = "size")]
-    sz_opt: Option<i64>,
+    sz_opt: Option<ByteSize>,
     #[serde(rename = "regex")]
     re_opt: Option<Regex>,
     #[serde(rename = "precmd")]
@@ -41,15 +44,18 @@ impl Rotate {
         }
 
         let f_st = stat(&self.path)?;
+        let sz_opt = self.sz_opt.as_ref().map(|bz| bz.bytes);
 
         if is_file(&f_st) {
             // check if size hit threshold
-            if !size_check(self.sz_opt, f_st) {
+            if !size_check(sz_opt, f_st) {
+                info!(path = self.path.to_str().unwrap(), "size not matched, skipping");
                 return Ok(());
             }
 
             // check if name match regex
             if !regex_check(self.re_opt.as_ref(), &self.path) {
+                info!(path = self.path.to_str().unwrap(), "regex not matched, skipping");
                 return Ok(());
             }
         }
@@ -83,8 +89,8 @@ impl Rotate {
             }
 
             match self.mode {
-                Mode::MoveCreate => move_create(p.clone(), rule.next_path(&p).unwrap(), self.depth_opt, self.sz_opt, self.re_opt.as_ref())?,
-                Mode::CopyTruncate => copy_truncate(p.clone(), rule.next_path(&p).unwrap(), self.depth_opt, self.sz_opt, self.re_opt.as_ref())?,
+                Mode::MoveCreate => move_create(p.clone(), rule.next_path(&p).unwrap(), self.depth_opt, sz_opt, self.re_opt.as_ref())?,
+                Mode::CopyTruncate => copy_truncate(p.clone(), rule.next_path(&p).unwrap(), self.depth_opt, sz_opt, self.re_opt.as_ref())?,
             }
 
             if let Some(cmd) = &self.post_opt {
@@ -102,9 +108,9 @@ impl Rotate {
     }
 }
 
-fn size_check(sz_opt: Option<i64>, f_st: FileStat) -> bool {
+fn size_check(sz_opt: Option<usize>, f_st: FileStat) -> bool {
     match sz_opt {
-        Some(sz) => f_st.st_blocks * 512 > sz,
+        Some(sz) => f_st.st_blocks * 512 > sz as i64,
         None => true
     }
 }
@@ -117,7 +123,8 @@ fn regex_check(re_opt: Option<&Regex>, path: &PathBuf) -> bool {
     }
 }
 
-fn move_create(src: PathBuf, dst: PathBuf, depth_opt: Option<i32>, sz_opt: Option<i64>, re_opt: Option<&Regex>) -> Result<()> {
+fn move_create(src: PathBuf, dst: PathBuf, depth_opt: Option<i32>, sz_opt: Option<usize>, re_opt: Option<&Regex>) -> Result<()> {
+    // info!(src = src.to_str().unwrap() , dst = dst.to_str().unwrap() ,"move create");
     if depth_opt.map_or(false, |n| n <= 0) {
         return Ok(());
     }
@@ -127,11 +134,13 @@ fn move_create(src: PathBuf, dst: PathBuf, depth_opt: Option<i32>, sz_opt: Optio
     if is_file(&f_st) {
         // check if size hit threshold
         if !size_check(sz_opt, f_st) {
+            info!("size not matched, skipping");
             return Ok(());
         }
 
         // check if name match regex
         if !regex_check(re_opt, &src) {
+            info!("regex not matched, skipping");
             return Ok(());
         }
 
@@ -154,7 +163,8 @@ fn move_create(src: PathBuf, dst: PathBuf, depth_opt: Option<i32>, sz_opt: Optio
     Ok(())
 }
 
-fn copy_truncate(src: PathBuf, dst: PathBuf, depth_opt: Option<i32>, sz_opt: Option<i64>, re_opt: Option<&Regex>) -> Result<()> {
+fn copy_truncate(src: PathBuf, dst: PathBuf, depth_opt: Option<i32>, sz_opt: Option<usize>, re_opt: Option<&Regex>) -> Result<()> {
+    // info!(src = src.to_str().unwrap() , dst = dst.to_str().unwrap() ,"copy truncate");
     if depth_opt.map_or(false, |n| n <= 0) {
         return Ok(());
     }
@@ -164,17 +174,21 @@ fn copy_truncate(src: PathBuf, dst: PathBuf, depth_opt: Option<i32>, sz_opt: Opt
     if is_file(&f_st) {
         // check if size hit threshold
         if !size_check(sz_opt, f_st) {
+            info!("size not matched, skipping");
             return Ok(());
         }
 
         // check if name match regex
         if !regex_check(re_opt, &src) {
+            info!("regex not matched, skipping");
             return Ok(());
         }
 
         // do not copy zero size file, see: https://man7.org/linux/man-pages/man2/lseek.2.html
         if stat_size(&f_st) > 0 {
-            file::copy_truncate(&src, &dst)?;
+            util::copy_truncate(&src, &dst)?;
+        } else {
+            File::create(&dst)?;
         }
         return Ok(());
     }
@@ -258,15 +272,15 @@ mod tests {
             name: root.to_string(),
             children: vec![
                 Node::File {
-                    name: "file0".to_string(),
+                    name: "file0.txt".to_string(),
                 },
                 Node::File {
-                    name: "file1".to_string(),
+                    name: "file1.log".to_string(),
                 },
                 Node::Dir {
                     name: "dir1".to_string(),
                     children: vec![Node::File {
-                        name: "file2".to_string(),
+                        name: "file2.log".to_string(),
                     }],
                 },
             ],
@@ -294,13 +308,13 @@ mod tests {
         let path1 = path.join("dir0.1");
 
         build_tree(path, &tree0);
-        move_create(path0, path1.clone(), None).unwrap();
+        move_create(path0, path1.clone(), None, None, None).unwrap();
 
         assert!(inspect_tree(&tree1, path1));
     }
 
     #[test]
-    fn move_create_recursive_test() {
+    fn move_create_dir_recursive_test() {
         let path = tempdir().unwrap().into_path();
         // let path = PathBuf::new();
 
@@ -309,10 +323,10 @@ mod tests {
             name: "dir0.1".to_string(),
             children: vec![
                 Node::File {
-                    name: "file0".to_string(),
+                    name: "file0.txt".to_string(),
                 },
                 Node::File {
-                    name: "file1".to_string(),
+                    name: "file1.log".to_string(),
                 },
                 Node::Dir {
                     name: "dir1".to_string(),
@@ -325,13 +339,45 @@ mod tests {
         let path1 = path.join("dir0.1");
 
         build_tree(path, &tree0);
-        move_create(path0, path1.clone(), Some(2)).unwrap();
+        move_create(path0, path1.clone(), Some(2), None, None).unwrap();
 
         assert!(inspect_tree(&tree1, path1));
     }
 
     #[test]
-    fn copy_truncate_simple_test() {
+    fn move_create_dir_regex_test() {
+        let path = tempdir().unwrap().into_path();
+        // let path = PathBuf::new();
+
+        let tree0 = gen_tree("dir0");
+        let tree1 = Node::Dir {
+            name: "dir0.1".to_string(),
+            children: vec![
+                Node::File {
+                    name: "file1.log".to_string(),
+                },
+                Node::Dir {
+                    name: "dir1".to_string(),
+                    children: vec![Node::File {
+                        name: "file2.log".to_string(),
+                    }],
+                },
+            ],
+        };
+
+        let path0 = path.join("dir0");
+        let path1 = path.join("dir0.1");
+
+        build_tree(path, &tree0);
+        let re = Regex::new(r".*\.log$").unwrap();
+
+        move_create(path0, path1.clone(), Some(3), None, Some(re).as_ref()).unwrap();
+
+        assert!(inspect_tree(&tree1, path1));
+    }
+
+    #[test]
+    fn copy_truncate_dir_simple_test() {
         let path = tempdir().unwrap().into_path();
         // let path = PathBuf::new();
 
@@ -341,13 +387,102 @@ mod tests {
         let path1 = path.join("dir0.1");
 
         build_tree(path, &tree0);
-        copy_truncate(path0, path1.clone(), None).unwrap();
+        copy_truncate(path0, path1.clone(), None, None, None).unwrap();
 
         assert!(inspect_tree(&tree1, path1));
     }
 
     #[test]
-    fn rotate_simple_test() {
+    fn rotate_file_simple_test() {
+        let path = tempdir().unwrap().into_path();
+        // let path = env::current_dir().unwrap();
+
+        let path0 = path.join("file");
+        let path1 = path.join("file.1");
+        let path2 = path.join("file.2");
+        let path3 = path.join("file.3");
+
+        create_with_leading_hole(&path0, 4096, 4096).unwrap();
+
+        let ro = Rotate {
+            path: path0.clone(),
+            keep: 2,
+            depth_opt: None,
+            sz_opt: None,
+            re_opt: None,
+            pre_opt: None,
+            post_opt: None,
+            mode: Mode::MoveCreate,
+        };
+
+        ro.rotate().unwrap();
+        assert!(path0.exists());
+        assert!(path1.exists());
+
+        ro.rotate().unwrap();
+        assert!(path0.exists());
+        assert!(path1.exists());
+        assert!(path2.exists());
+
+        ro.rotate().unwrap();
+        assert!(path0.exists());
+        assert!(path1.exists());
+        assert!(path2.exists());
+        assert!(!path3.exists());
+
+        ro.rotate().unwrap();
+        assert!(path0.exists());
+        assert!(path1.exists());
+        assert!(path2.exists());
+        assert!(!path3.exists());
+    }
+
+    #[test]
+    fn rotate_file_size_test() {
+        let path = tempdir().unwrap().into_path();
+        // let path = env::current_dir().unwrap();
+
+        let path0 = path.join("file");
+        let path1 = path.join("file.1");
+        let path2 = path.join("file.2");
+        let path3 = path.join("file.3");
+
+        create_with_leading_hole(&path0, 4096, 4096).unwrap();
+
+        let ro = Rotate {
+            path: path0.clone(),
+            keep: 2,
+            depth_opt: None,
+            sz_opt: Some(ByteSize::new(2048)),
+            re_opt: None,
+            pre_opt: None,
+            post_opt: None,
+            mode: Mode::MoveCreate,
+        };
+
+        ro.rotate().unwrap();
+        assert!(path0.exists());
+        assert!(path1.exists());
+
+        ro.rotate().unwrap();
+        assert!(path0.exists());
+        assert!(path1.exists());
+        assert!(!path2.exists());
+
+        ro.rotate().unwrap();
+        assert!(path0.exists());
+        assert!(path1.exists());
+        assert!(!path2.exists());
+        assert!(!path3.exists());
+
+        ro.rotate().unwrap();
+        assert!(path0.exists());
+        assert!(path1.exists());
+        assert!(!path2.exists());
+        assert!(!path3.exists());
+    }
+
+    fn rotate_dir_simple_test() {
         let path = tempdir().unwrap().into_path();
         // let path = env::current_dir().unwrap();
 
@@ -361,22 +496,33 @@ mod tests {
 
         build_tree(path, &tree0);
 
-        rotate(path0.clone(), 2, None).unwrap();
+        let ro = Rotate {
+            path: path0.clone(),
+            keep: 2,
+            depth_opt: None,
+            sz_opt: None,
+            re_opt: None,
+            pre_opt: None,
+            post_opt: None,
+            mode: Mode::MoveCreate,
+        };
+
+        ro.rotate().unwrap();
         assert!(inspect_tree(&tree0, path0.clone()));
         assert!(inspect_tree(&tree1, path1.clone()));
 
-        rotate(path0.clone(), 2, None).unwrap();
+        ro.rotate().unwrap();
         assert!(inspect_tree(&tree0, path0.clone()));
         assert!(inspect_tree(&tree1, path1.clone()));
         assert!(inspect_tree(&tree2, path2.clone()));
 
-        rotate(path0.clone(), 2, None).unwrap();
+        ro.rotate().unwrap();
         assert!(inspect_tree(&tree0, path0.clone()));
         assert!(inspect_tree(&tree1, path1.clone()));
         assert!(inspect_tree(&tree2, path2.clone()));
         assert!(!path3.exists());
 
-        rotate(path0.clone(), 2, None).unwrap();
+        ro.rotate().unwrap();
         assert!(inspect_tree(&tree0, path0));
         assert!(inspect_tree(&tree1, path1));
         assert!(inspect_tree(&tree2, path2));
@@ -385,29 +531,21 @@ mod tests {
 
     #[test]
     fn rotate_missing_test() {
-        // let path = tempdir().unwrap().into_path();
-        let path = env::current_dir().unwrap();
+        let path = tempdir().unwrap().into_path();
 
-        let tree1 = gen_tree("dir0.1");
-        let tree2 = gen_tree("dir0.2");
-        let path0 = path.join("dir0");
-        let path1 = path.join("dir0.1");
-        let path2 = path.join("dir0.2");
-        let path3 = path.join("dir0.3");
+        let path0 = path.join("file0");
 
-        build_tree(path.clone(), &tree1);
-        build_tree(path, &tree2);
+        let ro = Rotate {
+            path: path0.clone(),
+            keep: 2,
+            depth_opt: None,
+            sz_opt: None,
+            re_opt: None,
+            pre_opt: None,
+            post_opt: None,
+            mode: Mode::MoveCreate,
+        };
 
-        rotate(path0.clone(), 2, None).unwrap();
-        assert!(inspect_tree(&tree2, path2.clone()));
-        assert!(!path0.exists());
-        assert!(!path1.exists());
-        assert!(!path3.exists());
-
-        rotate(path0.clone(), 2, None);
-        assert!(!path0.exists());
-        assert!(!path1.exists());
-        assert!(!path2.exists());
-        assert!(!path3.exists());
+        assert!(ro.rotate().is_err());
     }
 }

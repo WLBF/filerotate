@@ -1,14 +1,15 @@
 use std::fs::File;
-use tracing::{error, info};
+use tracing::{error, info, debug};
 use clap::Parser;
 use std::io::BufReader;
 use std::str::FromStr;
 use tracing_subscriber::fmt::format;
 
-mod file;
+mod util;
 mod rotate;
 mod path_rule;
 mod regex;
+mod byte_size;
 
 #[derive(clap::ArgEnum, Clone, Debug)]
 enum Format {
@@ -43,9 +44,10 @@ fn main() {
 
     for ro in list.iter() {
         info!(path = ro.get_path().to_str().unwrap(), "start to rotate");
-        ro.rotate().map_or_else(
-            |e| error!(error = format!("{}", e).as_str(), "failed to rotate"),
-            |_| info!("rotate success"),
-        );
+        debug!(rotate = format!("{:?}", ro).as_str());
+        // ro.rotate().map_or_else(
+        //     |e| error!(error = format!("{}", e).as_str(), "failed to rotate"),
+        //     |_| info!("rotate success"),
+        // );
     }
 }

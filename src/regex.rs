@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 use std::fmt;
-use crate::file;
-use crate::file::*;
+use crate::util;
+use crate::util::*;
 use crate::path_rule::*;
 use anyhow::{Result};
 use nix::sys::stat::{FileStat, stat};
@@ -12,6 +12,10 @@ use serde::{Serialize, Deserialize, Deserializer};
 #[derive(Clone, Debug)]
 pub struct Regex(regex::Regex);
 impl Regex {
+    pub fn new(pattern: &str) -> Result<Self> {
+        Ok(Regex(regex::Regex::new(pattern)?))
+    }
+
     pub fn is_match(&self, text: &str) -> bool {
         self.0.is_match(text)
     }
