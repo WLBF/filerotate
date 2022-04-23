@@ -1,7 +1,6 @@
 use anyhow::Result;
 use std::fmt;
 use std::str::FromStr;
-use serde::{Serialize, Deserialize, Deserializer};
 
 const KIB: usize = 1024;
 const MIB: usize = KIB * 1024;
@@ -33,7 +32,7 @@ impl FromStr for ByteSize {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        let mut bytes = 0;
+        let bytes ;
         let mut num = String::new();
         let mut unit = String::new();
 

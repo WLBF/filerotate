@@ -1,12 +1,10 @@
-use std::ffi::OsStr;
-use std::fmt;
 use anyhow::{Result, anyhow};
-use tracing::{debug, info, warn, error};
+use tracing::{info};
 use nix::sys::stat::{FileStat, stat};
 use std::fs::{create_dir, read_dir, rename, remove_file, File, remove_dir_all};
-use std::path::{PathBuf};
+use std::path::{Path, PathBuf};
 use std::process::Command;
-use serde::{Serialize, Deserialize, Deserializer};
+use serde::{Deserialize};
 
 use crate::util;
 use crate::util::*;
@@ -78,7 +76,7 @@ impl Rotate {
         }
 
         for p in rule.rename_paths().iter() {
-            rename(p, rule.next_path(p).unwrap());
+            rename(p, rule.next_path(p).unwrap())?;
         }
 
         if let Some(p) = rule.init_path() {
@@ -115,7 +113,7 @@ fn size_check(sz_opt: Option<usize>, f_st: FileStat) -> bool {
     }
 }
 
-fn regex_check(re_opt: Option<&Regex>, path: &PathBuf) -> bool {
+fn regex_check(re_opt: Option<&Regex>, path: &Path) -> bool {
     match (re_opt, path.file_name().unwrap().to_str()) {
         (Some(re), Some(name)) => re.is_match(name),
         (None, _) => true,
@@ -209,7 +207,7 @@ fn copy_truncate(src: PathBuf, dst: PathBuf, depth_opt: Option<i32>, sz_opt: Opt
 
 #[cfg(test)]
 mod tests {
-    use std::env;
+    
     use super::*;
     use std::fs::DirEntry;
     use std::fs::{metadata};
@@ -482,6 +480,7 @@ mod tests {
         assert!(!path3.exists());
     }
 
+    #[test]
     fn rotate_dir_simple_test() {
         let path = tempdir().unwrap().into_path();
         // let path = env::current_dir().unwrap();
@@ -536,7 +535,7 @@ mod tests {
         let path0 = path.join("file0");
 
         let ro = Rotate {
-            path: path0.clone(),
+            path: path0,
             keep: 2,
             depth_opt: None,
             sz_opt: None,

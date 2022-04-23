@@ -1,8 +1,10 @@
+#![allow(dead_code)]
+
 use anyhow::Result;
 use nix::libc::off_t;
 use nix::libc::{S_IFDIR, S_IFMT, S_IFREG};
 use nix::sys::sendfile::sendfile;
-use nix::sys::stat::{stat, FileStat};
+use nix::sys::stat::{FileStat};
 use nix::unistd::{ftruncate, lseek, write, Whence};
 use rand::prelude::*;
 
@@ -13,10 +15,6 @@ use std::io;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::RawFd;
 use std::path::Path;
-
-const KIB: usize = 1024;
-const MIB: usize = KIB * 1024;
-const GIB: usize = MIB * 1024;
 
 #[inline(always)]
 pub fn is_file(f_st: &FileStat) -> bool {
@@ -57,11 +55,6 @@ fn sparse_copy(src_fd: RawFd, dst_fd: RawFd) -> Result<usize> {
     Ok(sz)
 }
 
-pub fn storage_size(path: &Path) -> Result<usize> {
-    let file_stat = stat(path)?;
-    Ok(stat_size(&file_stat))
-}
-
 pub fn create_with_leading_hole(path: &Path, hole_size: usize, data_size: usize) -> Result<File> {
     let file = File::create(path)?;
     let fd = file.as_raw_fd();
@@ -89,7 +82,15 @@ fn file_digest(path: &Path) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nix::sys::stat::stat;
     use tempfile::tempdir;
+
+    const KIB: usize = 1024;
+
+    fn storage_size(path: &Path) -> Result<usize> {
+        let file_stat = stat(path)?;
+        Ok(stat_size(&file_stat))
+    }
 
     #[test]
     fn storage_size_test() {
