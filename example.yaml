@@ -1,16 +1,7 @@
-- path: /a/b/c
+- path: /home/wlbf/Projects/filerotate/test.log
   keep: 3
   depth: 2
-  size: 1Kib
-  regex: "^ab$"
-  precmd: ["sh", "-c", "echo", "aaa"]
-  postcmd: ["sh", "-c", "echo", "aaa"]
-  mode: CopyTruncate
-- path: /a/b/c
-  keep: 3
-  depth: 2
-  size: 1Kib
-  regex: "^ab$"
-  precmd: ["sh", "-c", "echo", "aaa"]
-  postcmd: ["sh", "-c", "echo", "aaa"]
+  size: 1KiB
+  precmd: ["sh", "-c", "echo aaa"]
+  postcmd: ["sh", "-c", "echo bbb"]
   mode: MoveCreate

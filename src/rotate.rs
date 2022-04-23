@@ -1,3 +1,17 @@
+//! Copyright 2021 Liu BoFan
+//!
+//! Licensed under the Apache License, Version 2.0 (the "License");
+//! you may not use this file except in compliance with the License.
+//! You may obtain a copy of the License at
+//!
+//!     http://www.apache.org/licenses/LICENSE-2.0
+//!
+//! Unless required by applicable law or agreed to in writing, software
+//! distributed under the License is distributed on an "AS IS" BASIS,
+//! WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//! See the License for the specific language governing permissions and
+//! limitations under the License.
+
 use anyhow::{Result, anyhow};
 use tracing::{info};
 use nix::sys::stat::{FileStat, stat};
@@ -122,7 +136,7 @@ fn regex_check(re_opt: Option<&Regex>, path: &Path) -> bool {
 }
 
 fn move_create(src: PathBuf, dst: PathBuf, depth_opt: Option<i32>, sz_opt: Option<usize>, re_opt: Option<&Regex>) -> Result<()> {
-    // info!(src = src.to_str().unwrap() , dst = dst.to_str().unwrap() ,"move create");
+    info!(src = src.to_str().unwrap() , dst = dst.to_str().unwrap() ,"move create");
     if depth_opt.map_or(false, |n| n <= 0) {
         return Ok(());
     }
@@ -162,7 +176,7 @@ fn move_create(src: PathBuf, dst: PathBuf, depth_opt: Option<i32>, sz_opt: Optio
 }
 
 fn copy_truncate(src: PathBuf, dst: PathBuf, depth_opt: Option<i32>, sz_opt: Option<usize>, re_opt: Option<&Regex>) -> Result<()> {
-    // info!(src = src.to_str().unwrap() , dst = dst.to_str().unwrap() ,"copy truncate");
+    info!(src = src.to_str().unwrap() , dst = dst.to_str().unwrap() ,"copy truncate");
     if depth_opt.map_or(false, |n| n <= 0) {
         return Ok(());
     }
