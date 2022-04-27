@@ -57,6 +57,12 @@ pub fn copy_truncate(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+pub fn truncate(src: &Path) -> Result<()> {
+    let src_f = File::options().read(true).write(true).open(src)?;
+    ftruncate(src_f.as_raw_fd(), 0)?;
+    Ok(())
+}
+
 fn sparse_copy(src_fd: RawFd, dst_fd: RawFd) -> Result<usize> {
     let offset = lseek(src_fd, 0, Whence::SeekData)?;
     lseek(dst_fd, offset, Whence::SeekSet)?;

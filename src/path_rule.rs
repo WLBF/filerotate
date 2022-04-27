@@ -14,8 +14,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-
-const MAX_NUM: usize = 10;
+use crate::rotate::MAX_KEEP_NUM;
 
 pub trait PathRule {
     fn delete_paths(&self) -> &Vec<PathBuf>;
@@ -33,6 +32,8 @@ pub struct DefaultRule {
 
 impl DefaultRule {
     pub fn new(init: PathBuf, paths: Vec<PathBuf>, keep: usize) -> DefaultRule {
+        assert!(keep <= MAX_KEEP_NUM && keep > 1);
+        let pos = keep - 1;
         let mut set = vec![];
         let mut delete_set = HashSet::new();
         let mut rename_set = HashSet::new();
@@ -40,7 +41,7 @@ impl DefaultRule {
 
         set.push(init.clone());
 
-        for i in 1..keep {
+        for i in 1..pos {
             let mut name = init_name.clone();
             let mut path = init.clone();
             name.push(".");
@@ -50,7 +51,7 @@ impl DefaultRule {
             set.push(path);
         }
 
-        for i in keep..MAX_NUM {
+        for i in pos..MAX_KEEP_NUM {
             let mut name = init_name.clone();
             let mut path = init.clone();
             name.push(".");
@@ -126,7 +127,7 @@ mod tests {
             PathBuf::from("/var/lib/log.3"),
             PathBuf::from("/var/lib/log.4"),
         ];
-        let rule = DefaultRule::new(init, paths, 3);
+        let rule = DefaultRule::new(init, paths, 4);
         assert_eq!(rule.renames, vec![
             PathBuf::from("/var/lib/log.2"),
             PathBuf::from("/var/lib/log.1"),
@@ -152,7 +153,7 @@ mod tests {
             PathBuf::from("/var/lib/log.5"),
             PathBuf::from("/var/lib/log.6"),
         ];
-        let rule = DefaultRule::new(init, paths, 2);
+        let rule = DefaultRule::new(init, paths, 3);
         assert_eq!(rule.renames, vec![
             PathBuf::from("/var/lib/log.1"),
         ]);

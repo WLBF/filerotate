@@ -26,6 +26,8 @@ use crate::path_rule::*;
 use crate::regex::Regex;
 use crate::byte_size::ByteSize;
 
+pub const MAX_KEEP_NUM: usize = 10;
+
 #[derive(Deserialize, Debug)]
 pub enum Mode {
     MoveCreate,
@@ -51,68 +53,76 @@ pub struct Rotate {
 
 impl Rotate {
     pub fn rotate(&self) -> Result<()> {
+        let sz_opt = self.sz_opt.as_ref().map(|bz| bz.bytes);
+
         if !self.path.is_absolute() {
             return Err(anyhow!("path must be absolute"));
         }
 
-        let f_st = stat(&self.path)?;
-        let sz_opt = self.sz_opt.as_ref().map(|bz| bz.bytes);
+        match self.keep {
+            0 => delete(self.path.clone(), self.depth_opt, sz_opt, self.re_opt.as_ref()),
+            1 => truncate(self.path.clone(), self.depth_opt, sz_opt, self.re_opt.as_ref()),
+            2..=MAX_KEEP_NUM => {
+                let f_st = stat(&self.path)?;
 
-        if is_file(&f_st) {
-            // check if size hit threshold
-            if !size_check(sz_opt, f_st) {
-                info!(path = self.path.to_str().unwrap(), "size not matched, skipping");
-                return Ok(());
-            }
+                if is_file(&f_st) {
+                    // check if size hit threshold
+                    if !size_check(sz_opt, f_st) {
+                        info!(path = self.path.to_str().unwrap(), "size not matched, skipping");
+                        return Ok(());
+                    }
 
-            // check if name match regex
-            if !regex_check(self.re_opt.as_ref(), &self.path) {
-                info!(path = self.path.to_str().unwrap(), "regex not matched, skipping");
-                return Ok(());
+                    // check if name match regex
+                    if !regex_check(self.re_opt.as_ref(), &self.path) {
+                        info!(path = self.path.to_str().unwrap(), "regex not matched, skipping");
+                        return Ok(());
+                    }
+                }
+
+                let parent = self.path.parent().unwrap();
+                let entries = read_dir(parent)?;
+                let mut paths = vec![];
+                for res in entries {
+                    paths.push(res?.path());
+                }
+
+                let rule = DefaultRule::new(self.path.clone(), paths, self.keep);
+
+                for p in rule.delete_paths().iter() {
+                    if p.is_file() {
+                        remove_file(p)?;
+                    } else if p.is_dir() {
+                        remove_dir_all(p)?;
+                    }
+                }
+
+                for p in rule.rename_paths().iter() {
+                    rename(p, rule.next_path(p).unwrap())?;
+                }
+
+                if let Some(p) = rule.init_path() {
+                    if let Some(cmd) = &self.pre_opt {
+                        Command::new(&cmd[0])
+                            .args(&cmd[1..])
+                            .output()?;
+                    }
+
+                    match self.mode {
+                        Mode::MoveCreate => move_create(p.clone(), rule.next_path(&p).unwrap(), self.depth_opt, sz_opt, self.re_opt.as_ref())?,
+                        Mode::CopyTruncate => copy_truncate(p.clone(), rule.next_path(&p).unwrap(), self.depth_opt, sz_opt, self.re_opt.as_ref())?,
+                    }
+
+                    if let Some(cmd) = &self.post_opt {
+                        Command::new(&cmd[0])
+                            .args(&cmd[1..])
+                            .output()?;
+                    }
+                }
+
+                Ok(())
             }
+            _ => Err(anyhow!("keep must be less than {}", MAX_KEEP_NUM)),
         }
-
-        let parent = self.path.parent().unwrap();
-        let entries = read_dir(parent)?;
-        let mut paths = vec![];
-        for res in entries {
-            paths.push(res?.path());
-        }
-
-        let rule = DefaultRule::new(self.path.clone(), paths, self.keep);
-
-        for p in rule.delete_paths().iter() {
-            if p.is_file() {
-                remove_file(p)?;
-            } else if p.is_dir() {
-                remove_dir_all(p)?;
-            }
-        }
-
-        for p in rule.rename_paths().iter() {
-            rename(p, rule.next_path(p).unwrap())?;
-        }
-
-        if let Some(p) = rule.init_path() {
-            if let Some(cmd) = &self.pre_opt {
-                Command::new(&cmd[0])
-                    .args(&cmd[1..])
-                    .output()?;
-            }
-
-            match self.mode {
-                Mode::MoveCreate => move_create(p.clone(), rule.next_path(&p).unwrap(), self.depth_opt, sz_opt, self.re_opt.as_ref())?,
-                Mode::CopyTruncate => copy_truncate(p.clone(), rule.next_path(&p).unwrap(), self.depth_opt, sz_opt, self.re_opt.as_ref())?,
-            }
-
-            if let Some(cmd) = &self.post_opt {
-                Command::new(&cmd[0])
-                    .args(&cmd[1..])
-                    .output()?;
-            }
-        }
-
-        Ok(())
     }
 
     pub fn get_path(&self) -> &PathBuf {
@@ -219,9 +229,61 @@ fn copy_truncate(src: PathBuf, dst: PathBuf, depth_opt: Option<i32>, sz_opt: Opt
     Ok(())
 }
 
+fn delete(src: PathBuf, depth_opt: Option<i32>, sz_opt: Option<usize>, re_opt: Option<&Regex>) -> Result<()> {
+    recursive_iterate(src, depth_opt, sz_opt, re_opt, |path| {
+        info!(path = path.to_str().unwrap() ,"delete");
+        remove_file(path)?;
+        Ok(())
+    })
+}
+
+fn truncate(src: PathBuf, depth_opt: Option<i32>, sz_opt: Option<usize>, re_opt: Option<&Regex>) -> Result<()> {
+    recursive_iterate(src, depth_opt, sz_opt, re_opt, |path| {
+        info!(path = path.to_str().unwrap() ,"truncate");
+        util::truncate(path)?;
+        Ok(())
+    })
+}
+
+fn recursive_iterate<F>(src: PathBuf, depth_opt: Option<i32>, sz_opt: Option<usize>, re_opt: Option<&Regex>, f: F) -> Result<()>
+    where F: Fn(&Path) -> Result<()> + Copy {
+    if depth_opt.map_or(false, |n| n <= 0) {
+        return Ok(());
+    }
+
+    let f_st = stat(&src)?;
+
+    if is_file(&f_st) {
+        // check if size hit threshold
+        if !size_check(sz_opt, f_st) {
+            info!("size not matched, skipping");
+            return Ok(());
+        }
+
+        // check if name match regex
+        if !regex_check(re_opt, &src) {
+            info!("regex not matched, skipping");
+            return Ok(());
+        }
+
+        f(&src)?;
+        return Ok(());
+    }
+
+    if is_dir(&f_st) {
+        let entries = read_dir(&src)?;
+        for res in entries {
+            let entry = res?;
+            let nxt_src = entry.path();
+            recursive_iterate(nxt_src, depth_opt.map(|n| n - 1), sz_opt, re_opt, f)?;
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    
     use super::*;
     use std::fs::DirEntry;
     use std::fs::{metadata};
@@ -418,7 +480,7 @@ mod tests {
 
         let ro = Rotate {
             path: path0.clone(),
-            keep: 2,
+            keep: 3,
             depth_opt: None,
             sz_opt: None,
             re_opt: None,
@@ -463,7 +525,7 @@ mod tests {
 
         let ro = Rotate {
             path: path0.clone(),
-            keep: 2,
+            keep: 3,
             depth_opt: None,
             sz_opt: Some(ByteSize::new(2048)),
             re_opt: None,
@@ -511,7 +573,7 @@ mod tests {
 
         let ro = Rotate {
             path: path0.clone(),
-            keep: 2,
+            keep: 3,
             depth_opt: None,
             sz_opt: None,
             re_opt: None,
@@ -560,5 +622,59 @@ mod tests {
         };
 
         assert!(ro.rotate().is_err());
+    }
+
+    #[test]
+    fn rotate_keep_num_check_test() {
+        let path = tempdir().unwrap().into_path();
+
+        let path0 = path.join("file0");
+
+        let ro = Rotate {
+            path: path0,
+            keep: 11,
+            depth_opt: None,
+            sz_opt: None,
+            re_opt: None,
+            pre_opt: None,
+            post_opt: None,
+            mode: Mode::MoveCreate,
+        };
+
+        assert!(ro.rotate().is_err());
+    }
+
+    #[test]
+    fn rotate_delete_dir_test() {
+        let path = tempdir().unwrap().into_path();
+        // let path = env::current_dir().unwrap();
+
+        let tree0 = gen_tree("dir0");
+        let path0 = path.join("dir0");
+        let tree1 = Node::Dir {
+            name: "dir0".to_string(),
+            children: vec![
+                Node::Dir {
+                    name: "dir1".to_string(),
+                    children: vec![],
+                },
+            ],
+        };
+
+        build_tree(path, &tree0);
+
+        let ro = Rotate {
+            path: path0.clone(),
+            keep: 0,
+            depth_opt: None,
+            sz_opt: None,
+            re_opt: None,
+            pre_opt: None,
+            post_opt: None,
+            mode: Mode::MoveCreate,
+        };
+
+        ro.rotate().unwrap();
+        assert!(inspect_tree(&tree1, path0.clone()));
     }
 }
