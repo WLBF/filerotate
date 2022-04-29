@@ -1,7 +1,3 @@
-- path: /home/wlbf/Projects/filerotate/test.log
-  keep: 3
-  depth: 2
-  size: 1KiB
-  precmd: ["sh", "-c", "echo aaa"]
-  postcmd: ["sh", "-c", "echo bbb"]
+- path: /home/wlbf/Projects/filerotate/dir
+  depth: 3
   mode: MoveCreate
