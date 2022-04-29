@@ -1,4 +1,6 @@
-# filerotate
+# filerotate 
+
+![rust](https://github.com/WLBF/filerotate/actions/workflows/rust.yml/badge.svg)
 
 A log rotate tool written in rust.
 
