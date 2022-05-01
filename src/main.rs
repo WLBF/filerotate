@@ -50,7 +50,7 @@ fn main() {
     let file = File::open(args.path).expect("invalid config file path");
     let reader = BufReader::new(file);
     let list: Vec<rotate::Rotate> = match args.format {
-        Format::Yaml => serde_yaml::from_reader(reader).expect("json was not well-formatted"),
+        Format::Yaml => serde_yaml::from_reader(reader).expect("yaml was not well-formatted"),
         Format::Json => serde_json::from_reader(reader).expect("json was not well-formatted"),
     };
 
