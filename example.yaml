@@ -1,3 +1,6 @@
-- path: /home/wlbf/Projects/filerotate/dir
+- path: /foo/bar/dir
+  keep: 3
   depth: 3
+  regex: ".+\\.log$"
+  size: 10MiB
   mode: MoveCreate
