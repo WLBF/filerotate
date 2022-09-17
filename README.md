@@ -11,16 +11,16 @@ in a yaml or json config file. See [example.yaml](example.yaml) for more details
 
 ### Explanation of the config file
 
-| Param   | Description                                                                                                                                                                                                       |
-|---------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| path    | (Required) Absolute path to rotate, can be a regular file or directory.                                                                                                                                           |
-| keep    | (Required) File or directory keep num, including origin file or directory. (delete file if 0, truncate file if 1)                                                                                                 |
-| mode    | (Required) Rotate mode can be `MoveCreate` or `CopyTruncate`.                                                                                                                                                     |
-| depth   | Recursive depth if path is directory. Depth is infinite if not set.                                                                                                                                               |
-| size    | Only rotate file who's size grow bigger then configured size. Byte size suffix is supported e.g. `KiB, mb, G`. Note size is counted as storage size here, may different from apparent file size listed by `ls -l` |
-| regex   | Only rotate file who's name match regex.                                                                                                                                                                          |
-| precmd  | Execute command before rotate.                                                                                                                                                                                    |
-| postcmd | Execute command after rotate.                                                                                                                                                                                     |
+| Param           | Description                                                                                                                                                                                                       |
+|-----------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| path (Required) |  Absolute path to rotate, can be a regular file or directory.                                                                                                                                           |
+| keep (Required) |  File or directory keep num, including origin file or directory. (delete file if 0, truncate file if 1)                                                                                                 |
+| mode (Required) |  Rotate mode can be `MoveCreate` or `CopyTruncate`.                                                                                                                                                     |
+| depth           | Recursive depth if path is directory. Depth is infinite if not set.                                                                                                                                               |
+| size            | Only rotate file who's size grow bigger then configured size. Byte size suffix is supported e.g. `KiB, mb, G`. Note size is counted as storage size here, may different from apparent file size listed by `ls -l` |
+| regex           | Only rotate file who's name match regex.                                                                                                                                                                          |
+| precmd          | Execute command before rotate.                                                                                                                                                                                    |
+| postcmd         | Execute command after rotate.                                                                                                                                                                                     |
 
 ## Example
 
